@@ -1,0 +1,1030 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PoSM Live Verification</title>
+<style>
+  /* Fonts from this server (memory_accounting/assets/fonts, under /fonts/): the verifier may sit on a LAN with no internet,
+     and the page loads nothing from elsewhere. Plex Mono is not bundled: monospace text uses the system's. */
+  @font-face { font-family: "IBM Plex Sans"; src: url("/fonts/plex-sans.ttf") format("truetype"); font-weight: 100 700; font-style: normal; font-display: swap; }
+  @font-face { font-family: "IBM Plex Sans"; src: url("/fonts/plex-sans-italic.ttf") format("truetype"); font-weight: 100 700; font-style: italic; font-display: swap; }
+  @font-face { font-family: "IBM Plex Serif"; src: url("/fonts/plex-serif-light.ttf") format("truetype"); font-weight: 300; font-style: normal; font-display: swap; }
+  @font-face { font-family: "IBM Plex Serif"; src: url("/fonts/plex-serif.ttf") format("truetype"); font-weight: 400; font-style: normal; font-display: swap; }
+  /* Same tokens as the CG_SCC apps' globals.css: paper/surface/ink, line, accent, teal, warn, violet, magenta; Plex Sans 300 body, Plex Serif headings. */
+  :root {
+    --paper: #f5f3e7; --surface: #fffefa; --ink: #212529; --ink-muted: #6b7069; --ink-faint: #9aa096; --line: #ddd9c4;
+    --accent: #ca4f3e; --accent-dark: #a83f31; --accent-soft: #f7e9e6;
+    --teal: #79bcba; --teal-dark: #4f9e9b; --teal-soft: #e9f4f3;
+    --warn: #b58900; --warn-soft: #f7f0dc;
+    --violet: #5f64b8; --violet-soft: #eceaf8; --magenta: #b03a72; --magenta-soft: #f9e9f1;
+    --honest: var(--teal-dark); --dram_mapped: var(--warn); --dram_copy: var(--accent); --other_gpu: var(--violet); --encode_otf: var(--magenta); --cpu: var(--ink-faint);
+    --partial: #8a6a3a; --lora: #3f7f57; --evict: #c2410c; --evict_dram: #7c5cbf; --tamper: #0f766e; --dyn_dram: #a21caf;
+    --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+    --font-serif: "IBM Plex Serif", ui-serif, Georgia, serif;
+    --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(--font-sans); font-weight: 300; font-size: 14px; line-height: 1.5; }
+  ::selection { background: var(--accent); color: #fff; }
+  strong, b { font-weight: 500; }
+  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px 20px; max-width: 1400px; margin: 0 auto; padding: 28px 24px 12px; }
+  header h1 { font-family: var(--font-serif); font-weight: 300; font-size: 30px; line-height: 1.15; margin: 0; }
+  .pill { font-size: 12px; padding: 2px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--ink-muted); text-transform: uppercase; letter-spacing: .12em; }
+  .pill.running { border-color: var(--teal); background: var(--teal-soft); color: var(--teal-dark); }
+  .pill.calibrating { border-color: color-mix(in srgb, var(--warn) 40%, transparent); background: var(--warn-soft); color: var(--warn); }
+  .pill.stopped, .pill.disconnected { border-color: color-mix(in srgb, var(--accent) 40%, transparent); background: var(--accent-soft); color: var(--accent); }
+  main { display: grid; grid-template-columns: 1fr; gap: 16px; padding: 0 24px 40px; max-width: 1400px; margin: 0 auto; }
+  @media (min-width: 1000px) { main { grid-template-columns: 1fr 1fr; } .wide { grid-column: 1 / -1; } }
+  section { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; min-width: 0; }
+  section h2 { font-family: var(--font-serif); font-weight: 300; font-size: 20px; margin: 0; padding: 14px 24px; border-bottom: 1px solid var(--line); }
+  section h2 .sub { font-family: var(--font-sans); font-size: 12px; color: var(--ink-muted); margin-left: 10px; }
+  .body { padding: 16px 24px 18px; }
+  .kv { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px 24px; }
+  .kv div span { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .12em; color: var(--ink-muted); margin-bottom: 2px; }
+  .kv div b { font-weight: 400; font-variant-numeric: tabular-nums; }
+  .kv div.quiet-warn b { color: var(--warn); }
+  .claim-chains { margin: 0 0 14px; }
+  .claim-chains td { padding: 6px 12px; }
+  .claim-chains tr.row td:first-child { text-transform: capitalize; }
+  .claim-chains tr.sel td { background: var(--paper); } .claim-chains tr.sel td:first-child { box-shadow: inset 2px 0 0 var(--ink-faint); }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { font-size: 11px; text-transform: uppercase; letter-spacing: .12em; color: var(--ink-muted); font-weight: 400; }
+  td.num, th.num { text-align: right; }
+  tr:last-child td { border-bottom: 0; }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 8px; vertical-align: middle; }
+  .v { font-weight: 500; }
+  .v.pass { color: var(--teal-dark); } .v.fail { color: var(--accent); } .v.pend { color: var(--ink-faint); } .v.cal { color: var(--warn); } .v.warn { color: var(--warn); } .v.off { color: var(--ink-faint); font-weight: 400; }
+  tr.row { cursor: pointer; } tr.row:hover td { background: var(--paper); }
+  tr.detail td { white-space: normal; background: var(--paper); font-family: var(--font-mono); font-size: 12px; line-height: 1.6; color: var(--ink-muted); }
+  .scroll { max-height: 440px; overflow: auto; }
+  canvas { width: 100%; height: 240px; display: block; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--ink-muted); margin-top: 10px; }
+  .mono { font-family: var(--font-mono); font-size: 12px; }
+  .muted { color: var(--ink-muted); }
+  .u, .kv div span .u, th .u { text-transform: none; letter-spacing: 0; font-style: normal; }
+  .btn { float: right; margin-top: 2px; font: 12px var(--font-sans); text-transform: uppercase; letter-spacing: .12em; color: var(--ink-faint);
+         background: transparent; border: 1px solid var(--line); border-radius: 999px; padding: 3px 12px; cursor: pointer; }
+  .btn:hover { color: var(--accent); border-color: var(--accent); }
+  .btn.on { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }   /* units and symbols inside uppercased labels */
+  .empty { padding: 36px 24px; text-align: center; color: var(--ink-muted); font-size: 13px; }
+  body[data-mode="monitor"] .research-only { display: none !important; }
+  body:not([data-mode="monitor"]) .monitor-only { display: none !important; }
+  body:not([data-dynamic="1"]) .dyn-only { display: none !important; }
+  body:not([data-memory="1"]) .mem-only { display: none !important; }
+  body:not([data-claim="1"]) .claim-only { display: none !important; }
+  body[data-claim="1"] .noclaim-only { display: none !important; }
+  body:not([data-claimpanel="1"]) .claimpanel-only { display: none !important; }   /* any chain with a claim entry, an off one included */
+  .gauge { position: relative; height: 22px; border-radius: 6px; background: var(--paper); border: 1px solid var(--line); overflow: hidden; }
+  .gauge .fill { position: absolute; top: 0; bottom: 0; left: 0; background: var(--teal); }
+  .gauge .fill.bad { background: var(--accent); }
+  .gauge .mark { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--ink); }
+  .gauge-label { display: flex; justify-content: space-between; font-size: 12px; color: var(--ink-muted); margin: 10px 0 4px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+  .chip { font-size: 12px; padding: 2px 10px; border-radius: 999px; border: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+  .chip.ok { color: var(--teal-dark); border-color: var(--teal); background: var(--teal-soft); }
+  .chip.bad { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+  .chip.warn { color: var(--warn); border-color: var(--warn); background: var(--warn-soft); }
+  .membar { display: flex; height: 34px; border-radius: 8px; overflow: hidden; border: 1px solid var(--line); background: var(--paper); position: relative; }
+  .membar div { height: 100%; }
+  .membar .static { background: var(--teal); } .membar .dynamic { background: var(--violet); } .membar .unchecked { background: var(--accent); }
+  .membar .bound { position: absolute; top: -4px; bottom: -4px; width: 2px; background: var(--ink); }
+  .memlegend { display: flex; flex-wrap: wrap; gap: 6px 22px; font-size: 13px; margin-top: 12px; }
+  .memlegend .sw { display: inline-block; width: 11px; height: 11px; border-radius: 3px; margin-right: 8px; vertical-align: -1px; }
+  .banner { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 28px; padding: 18px 24px; }
+  .banner .status { font-family: var(--font-serif); font-weight: 300; font-size: 26px; }
+  .banner.ok .status { color: var(--teal-dark); } .banner.alert .status { color: var(--accent); } .banner.warn .status { color: var(--warn); }
+  .banner.idle .status { color: var(--ink-faint); }   /* stopped or disconnected: what it shows is no longer live */
+  .banner .counts { display: flex; gap: 24px; margin-left: auto; }
+  .banner .counts div span { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .12em; color: var(--ink-muted); }
+  .banner .counts div b { font-weight: 400; font-size: 18px; font-variant-numeric: tabular-nums; }
+  .note { font-size: 12px; color: var(--ink-muted); margin: 0 0 10px; }
+  .toggles { display: flex; flex-wrap: wrap; gap: 8px; }
+  .tog { font: 12px var(--font-sans); letter-spacing: .04em; border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px 4px 10px;
+         background: transparent; color: var(--ink-faint); cursor: pointer; display: inline-flex; align-items: center; gap: 8px; }
+  .tog .dot { margin: 0; opacity: .35; }
+  .tog.on { color: var(--ink); background: var(--surface); border-color: var(--ink-faint); } .tog.on .dot { opacity: 1; }
+  .tog:hover { border-color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Proof of Specific Memory</h1>
+  <span id="state" class="pill disconnected">connecting</span>
+  <span id="mode" class="pill"></span>
+  <span class="muted" id="where"></span>
+</header>
+<main>
+  <section class="wide">
+    <h2>Run</h2>
+    <div class="body"><div class="kv" id="meta"></div></div>
+  </section>
+
+  <section class="wide mem-only">
+    <h2>GPU memory accounted<span class="sub" id="mem-sub">the verifier's own capacity figure, minus what the chains challenge</span></h2>
+    <div class="body">
+      <div class="membar" id="membar"></div>
+      <div class="memlegend" id="memlegend"></div>
+      <p class="note" style="margin:12px 0 0" id="memnote"></p>
+    </div>
+  </section>
+
+  <section class="wide claimpanel-only">
+    <h2>Timing claim<span class="sub" id="claim-sub">mean response time over a window of challenges against the honest baseline</span></h2>
+    <div class="body">
+      <div id="claim-chains"></div>
+      <p class="note" id="claim-statement"></p>
+      <div class="kv" id="claim-kv"></div>
+      <div id="claim-gauges">
+        <div class="gauge-label"><span id="claim-progress-label">window</span><span id="claim-progress-n"></span></div>
+        <div class="gauge"><div class="fill" id="claim-progress"></div></div>
+        <div id="claim-gauges-mean">
+          <div class="gauge-label"><span>mean shift over the honest mean</span><span id="claim-shift-n"></span></div>
+          <div class="gauge"><div class="fill" id="claim-shift"></div><div class="mark" id="claim-tau"></div></div>
+          <div class="gauge-label"><span>responses at the clip</span><span id="claim-var-n"></span></div>
+          <div class="gauge"><div class="fill" id="claim-var"></div><div class="mark" id="claim-varlim"></div></div>
+        </div>
+      </div>
+      <div class="chips" id="claim-verdicts"></div>
+    </div>
+  </section>
+
+  <section class="wide monitor-only">
+    <div class="banner ok" id="banner">
+      <div class="status" id="status">Waiting for verifications</div>
+      <div class="counts">
+        <div><span>verifications</span><b id="c-n">0</b></div>
+        <div><span>passed</span><b id="c-pass">0</b></div>
+        <div><span>alerts</span><b id="c-alerts">0</b></div>
+        <div class="noclaim-only"><span>drift (CUSUM)</span><b id="c-cusum">0.0</b></div>
+        <div class="claim-only"><span>claim windows held</span><b id="c-windows">0</b></div>
+        <div class="claim-only"><span>timing misses (weighed)</span><b id="c-misses">0</b></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="monitor-only">
+    <h2>Alerts<span class="sub">what a deployed verifier would raise</span></h2>
+    <div class="scroll" style="max-height:300px">
+      <table><thead><tr><th>time</th><th>#</th><th>kind</th><th>detail</th></tr></thead><tbody id="alerts"></tbody></table>
+    </div>
+  </section>
+
+  <section class="monitor-only">
+    <h2>Prover simulation<span class="sub">demo control, not part of the protocol</span></h2>
+    <div class="body">
+      <p class="note">Sets the posture of the prover's cheat simulator: honest, or one cheat answering every challenge. The verifier on this page
+        has no such channel and does not see the selection; it only sees round trips, digests and replays.
+        <b>evict</b> overwrites part of the filler (a fifth in the demo) with the prover's own data and answers from what is there: wrong digests;
+        <b>evict_dram</b> keeps that filler in host memory and reads it over PCIe: slower links, caught by the timing claim; <b>tamper</b> changes
+        a tenth of the weight blocks in place, so inference runs on other weights: the dynamic replay stops matching; <b>dyn_dram</b> keeps the
+        filler of half the free dynamic memory (the top of the KV pool) in host memory and reads it over PCIe: slower dynamic links.</p>
+      <div class="toggles" id="postures"></div>
+      <p class="note" style="margin:10px 0 0" id="posture-now"></p>
+    </div>
+  </section>
+
+  <section class="research-only">
+    <h2>Verifications by strategy<span class="sub">click a strategy to start or stop challenging it</span></h2>
+    <div class="body" style="padding-bottom:10px"><div class="toggles" id="toggles"></div></div>
+    <table>
+      <thead><tr><th>strategy</th><th class="num">static rounds</th><th class="num">within deadline</th><th class="num">digests ok</th><th class="num">median RTT</th><th class="num">gap</th>
+        <th class="num dyn-only">dynamic rounds</th><th class="num dyn-only">within deadline</th><th class="num dyn-only">replays exact</th></tr></thead>
+      <tbody id="summary"></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Prover side</h2>
+    <div class="body"><div class="kv" id="prover"><div><span>no stats yet</span><b>&nbsp;</b></div></div></div>
+  </section>
+
+  <section class="wide">
+    <h2>Round trip over time<span class="sub">min over repeats · solid line deadline · dashed honest median</span></h2>
+    <div class="body"><canvas id="timeline"></canvas><div class="legend research-only" id="legend"></div></div>
+  </section>
+
+  <section class="wide research-only">
+    <h2>Distributions<span class="sub">per strategy, shared axis in µs · line deadline</span></h2>
+    <div class="body"><canvas id="dist"></canvas></div>
+  </section>
+
+  <section class="wide">
+    <h2>Challenges<span class="sub">newest first · click a row for what was sent, received and expected</span>
+      <button id="pause" class="btn" title="stop the table moving while you read it; events keep arriving">pause table</button></h2>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>#</th><th>time</th><th class="research-only">strategy</th><th>verdict</th><th class="num">RTT <em class="u">µs</em></th><th class="num">arm wait <em class="u">µs</em></th><th class="num">gap <em class="u">σ</em></th><th>digest</th><th class="num dyn-only">dynamic RTT <em class="u">µs</em></th><th class="num dyn-only">live chain <em class="u">µs</em></th><th class="dyn-only">dynamic</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<script>
+(() => {
+  const STRATS = ["honest","dram_mapped","dram_copy","other_gpu","encode_otf","cpu","partial","lora","evict","evict_dram","tamper","dyn_dram"];
+  const color = s => getComputedStyle(document.documentElement).getPropertyValue("--" + s).trim() || "#888";
+  const $ = id => document.getElementById(id);
+  const us = ns => ns == null ? "" : (ns / 1e3).toFixed(0);
+  const fmtB = b => { if (b == null) return "—"; if (b >= (1<<30)) return (b/(1<<30)).toFixed(2) + " GiB";
+    if (b >= (1<<20)) { const m = b/(1<<20); return m.toFixed(m < 10 ? 2 : m < 100 ? 1 : 0) + " MiB"; } return (b/1024).toFixed(0) + " KiB"; };
+  const reload = ns => ns ? ` · ${(ns / 1e9 * 50).toFixed(2)} GB reloadable` : "";       // what a 50 GB/s link moves in that window
+  // Every value from an event goes through esc() before it enters HTML: the prover shapes some of them (evidence
+  // errors, segment names, received digests), and markup in one must stay text, not change the page.
+  const ESC = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+  const esc = x => String(x ?? "").replace(/[&<>"']/g, c => ESC[c]);
+  const dot = s => `<span class="dot" style="background:${esc(color(s))}"></span>`;
+  // The hub sends non-finite numbers (an unreachable N, the bound of an empty period) as null: shown as "—".
+  const fix = (x, d) => x == null ? "—" : x.toFixed(d);
+  const prec = (x, d) => x == null ? "—" : x.toPrecision(d);
+  const sgn = (x, d) => x == null ? "—" : (x >= 0 ? "+" : "") + x.toFixed(d);
+
+  let meta = {};
+  // Timing claims, one per chain kind: the static chains, the dynamic ones (KV cache + activations) and the live
+  // one. A claim event names its chain in "chain"; one without it is the static chain's. Each chain has its
+  // own statement (the meta "claim" that names it, or meta "claims" keyed by chain), progress and verdicts.
+  const CHAINS = ["static", "dynamic", "live"];
+  const chainOf = x => (x && typeof x.chain === "string" && x.chain) || "static";
+  // chain -> { info, progress (window or period), misses (miss-count progress), missAlarm (the miss-count alarm still
+  // in its window, or null), missAlarms (all of them, newest first), verdicts (newest first) }
+  let claims = new Map();
+  const claimOf = ch => { let s = claims.get(ch); if (!s) claims.set(ch, s = { info: null, progress: null, misses: null, missAlarm: null, missAlarms: [], verdicts: [] }); return s; };
+  // meta "claims" names every chain the verifier set a claim up for (absent: none); meta "claim" alone (older
+  // logs) one chain at a time
+  function absorbClaimMeta(m) {
+    if (m.claim && typeof m.claim === "object") claimOf(chainOf(m.claim)).info = m.claim;
+    if (m.claims && typeof m.claims === "object") {
+      for (const [ch, st] of claims) if (!(ch in m.claims)) st.info = null;
+      for (const [ch, c] of Object.entries(m.claims)) if (c && typeof c === "object") claimOf(ch).info = c;
+    }
+  }
+  // What actually runs on a chain: its claim's "tests" ("window", "period", "misses"; empty: nothing runs,
+  // and "reason" says why). A claim without the field (an older log) is read the way that verifier ran it: the
+  // period model always, a window when it was sized, a miss count when it has one.
+  const TESTS = ["window", "period", "misses"];
+  function testsOf(c) {
+    if (!c) return [];
+    if (Array.isArray(c.tests)) return c.tests.filter(t => TESTS.includes(t));
+    return [...(c.mode === "period" ? ["period"] : c.n_window != null ? ["window"] : []), ...(c.misses && typeof c.misses === "object" ? ["misses"] : [])];
+  }
+  const rank = ch => { const i = CHAINS.indexOf(ch); return i < 0 ? CHAINS.length : i; };
+  const byRank = (a, b) => rank(a) - rank(b) || (a < b ? -1 : a > b ? 1 : 0);
+  const infoChains = () => [...claims.keys()].filter(ch => claims.get(ch).info).sort(byRank);     // shown in the claim panel, off ones too
+  const claimChains = () => infoChains().filter(ch => testsOf(claims.get(ch).info).length);      // a test runs on it
+  // a test runs and weighs the chain's single misses: not when its window or period fills too slowly ("per_miss",
+  // with the why in "reason"), for then the verifier alerts on every miss of the chain at once
+  const weighChains = () => claimChains().filter(ch => !claims.get(ch).info.per_miss);
+  const hasClaim = () => claimChains().length > 0;
+  const cap1 = s => s[0].toUpperCase() + s.slice(1);
+  let selChain = null;             // the chain the claim panel's figures and gauges show
+  const alerts = [];               // alert events, newest first (the hub's order: its seq)
+  const flags = [];                // single-challenge flags (--challenge-flags warn): logged and listed, outside the claim; never red
+  // The verifier's clock: the latest publish time ("t") of any event. An alert's recency is measured on it, not by
+  // the round it names: checks finish late (a record replayed seconds after its round, a lag or unchecked report
+  // naming old rounds), and dynamic and static rounds share one id sequence, so ids run ahead fast. The page's
+  // own clock is not used: the verifier's may differ, and a replayed log must read as it did live.
+  let streamT = 0;
+  const ALERT_HOLD_S = 60;         // an alert keeps the monitor banner red for this long on the verifier's clock
+  let uncheckedEv = null;          // the stop's report of rounds never checked: the run's final failure, kept
+  let proverPosture = null, lastPostureReply = null;
+  const vers = new Map();          // id -> verification event (merged with its check)
+  let order = [];                  // ids newest first
+  const MAXROWS = 300;
+  let dirty = false;
+  let connected = false;           // the event stream is open (a snapshot came since the last error)
+  const expanded = new Set();      // rows opened for their detail
+  let paused = false, frozen = []; // the table held still while it is read
+
+  // controls are rebuilt only when they change: replacing a button under the pointer loses the click
+  const setHTML = (el, html) => { if (el._html !== html) { el.innerHTML = html; el._html = html; } };
+  function setState(s) { const el = $("state"); el.textContent = s; el.className = "pill " + s; }
+
+  function onEvent(ev) {
+    if (ev.type === "snapshot") {
+      // a (re)connect, or another run on the same port: everything the page holds comes again in the snapshot,
+      // so nothing of the old stream may stay (an alert counted twice, an old run's posture or opened rows)
+      meta = ev.meta || {}; vers.clear(); order = []; claims = new Map(); alerts.length = 0; streamT = 0; uncheckedEv = null;
+      proverPosture = null; lastPostureReply = null; expanded.clear(); if (paused) setPaused(false);
+      $("prover").innerHTML = `<div><span>no stats yet</span><b>&nbsp;</b></div>`;
+      connected = true; absorbClaimMeta(meta); (ev.events || []).forEach(onEvent); dirty = true; return;
+    }
+    if (typeof ev.t === "number" && ev.t > streamT) streamT = ev.t;
+    if (ev.type === "meta") { Object.assign(meta, ev); delete meta.type; absorbClaimMeta(ev); dirty = true; return; }
+    if (ev.type === "control") { meta.control = Object.assign({}, meta.control, ev); delete meta.control.type; delete meta.control.seq; delete meta.control.t; dirty = true; return; }
+    if (ev.type === "verification") {
+      const v = Object.assign(vers.get(ev.id) || {}, ev);
+      vers.set(ev.id, v);
+      if (!order.includes(ev.id)) order.unshift(ev.id);
+      if (order.length > MAXROWS) { const drop = order.pop(); vers.delete(drop); }
+      dirty = true; return;
+    }
+    if (ev.type === "check") {
+      const v = vers.get(ev.id); if (!v) return;
+      v.unchecked = false;
+      if (ev.error != null) {                             // the check itself threw: nothing was checked, the verification fails
+        v.check_error = String(ev.error); v.digest_ok = ev.digest_ok ?? null; v.expected = ev.challenges;
+        if (v.dyn) { v.dyn_checked = true; v.dyn_digest_ok = ev.dyn_digest_ok ?? null; }
+        dirty = true; return;
+      }
+      v.digest_ok = ev.digest_ok; v.expected = ev.challenges;
+      if (ev.dyn_check) { v.dyn_digest_ok = ev.dyn_digest_ok; v.dyn_check = ev.dyn_check; v.dyn_checked = true; }
+      if (ev.record_saved === false) { v.record_saved = false; v.not_kept = ev.not_kept || null; }      // bound and checked, but past --evidence-max-total: not kept
+      dirty = true; return;
+    }
+    if (ev.type === "unchecked") {                         // at the stop: these rounds were never checked, each a failed check
+      uncheckedEv = ev;
+      for (const id of [...(ev.static_ids || []), ...(ev.dynamic_ids || [])]) { const v = vers.get(id); if (v) v.unchecked = true; }
+      dirty = true; return;
+    }
+    if (ev.type === "claim_progress" || ev.type === "claim_period_progress") {
+      const st = claimOf(chainOf(ev));
+      if (ev.misses_window != null) {                     // the miss count: an alarm stays until its window has passed
+        st.misses = ev;
+        if (st.missAlarm && ev.misses_n != null && ev.misses_n >= ev.misses_window) st.missAlarm = null;
+        if (st.missFlag && ev.misses_n != null && ev.misses_n >= ev.misses_window) st.missFlag = null;
+      }
+      if (ev.type === "claim_period_progress" || ev.n != null) st.progress = ev;
+      dirty = true; return;
+    }
+    if (ev.type === "claim_verdict" || ev.type === "claim_window" || ev.type === "claim_period_verdict") {
+      const st = claimOf(chainOf(ev)); st.verdicts.unshift(ev); if (st.verdicts.length > 40) st.verdicts.pop(); st.progress = null; dirty = true; return;
+    }
+    if (ev.type === "retry") { const v = vers.get(ev.id); if (v) { v.retried_by = ev.retried_by; v.miss_confirmed = ev.miss_confirmed; dirty = true; } return; }
+    if (ev.type === "prover") { proverPosture = ev.posture || null; renderProver(ev); dirty = true; return; }
+    if (ev.type === "alert") {
+      ev._t = typeof ev.t === "number" ? ev.t : streamT;  // (an alert without a time, from an older log: when it came)
+      alerts.unshift(ev); if (alerts.length > 500) alerts.pop();
+      if (ev.kind === "claim" && ev.rule === "misses") {
+        // The miss count starts over at an alarm (memory_accounting.verifier.timing_claim.MissCountTest): the chain stays failed until
+        // a whole window of round trips has passed since, i.e. while the alarm is inside its current window.
+        const st = claimOf(chainOf(ev)); st.missAlarm = ev; st.missAlarms.unshift(ev); if (st.missAlarms.length > 40) st.missAlarms.pop();
+      }
+      dirty = true; return;
+    }
+    if (ev.type === "flag") {                           // a single challenge under --challenge-flags warn: the claim weighs it
+      ev._t = typeof ev.t === "number" ? ev.t : streamT;
+      flags.unshift(ev); if (flags.length > 500) flags.pop();
+      if (ev.rule === "misses") { const st = claimOf(chainOf(ev)); st.missFlag = ev; st.missAlarms.unshift(ev); if (st.missAlarms.length > 40) st.missAlarms.pop(); }
+      dirty = true; return;
+    }
+    if (ev.type === "posture") { lastPostureReply = ev; proverPosture = ev.posture || proverPosture; dirty = true; return; }
+  }
+  const isMonitor = () => meta.mode === "monitor";
+
+  // A failure that no timing claim weighs and no retry excuses: a missing reply or dynamic READY, a late READY
+  // (they bound what a prover can reload: the verifier alerts at once), a gross miss, a wrong digest or replay,
+  // a check that failed or never ran (the run stopped first), memory over its bound or impossible.
+  // a late READY under --ready-ceiling × its bound is counted by the verifier (late_ready_weighed), not alerted: a warning
+  // a READY past the ceiling on a chain whose claim counts it at the clip (--challenge-flags warn: late_ready_flagged) is a flag
+  const lateHard = v => !!(v.late_ready && !v.late_ready_weighed && !v.late_ready_flagged),
+        dynLateHard = d => !!(d && d.late_ready && !d.late_ready_weighed && !d.late_ready_flagged);
+  // a missing reply that a claim counts at the clip (--challenge-flags warn: faults_flagged) is a warning, not a failure
+  const hardFail = v => !!((v.faults && v.faults.length && !v.faults_flagged) || lateHard(v) || (v.dyn && (dynLateHard(v.dyn) || (v.dyn.fault && !v.faults_flagged))) || (v.gross && v.gross.length)
+    || v.digest_ok === false || v.dyn_digest_ok === false || v.check_error != null || v.unchecked || (v.memory && (v.memory.over || v.memory.impossible)));
+  // The chains of a verification that missed their deadline on time alone (a late READY or a missing reply is
+  // not a timing miss: the verifier reports those at once, as gross).
+  function missChains(v) {
+    const out = [], d = v.dyn;
+    if (v.within === false && !v.late_ready && !(v.faults && v.faults.length) && v.rtt_ns != null) out.push("static");
+    if (d && !d.late_ready && !d.fault && d.rtt_ns != null && d.deadline_ns != null && d.rtt_ns > d.deadline_ns) out.push("dynamic");
+    if (d && d.live && d.live.within === false) out.push("live");
+    return out;
+  }
+  // The chains whose misses a running claim weighs, when that is all that is wrong with this verification
+  // (each miss feeds its own chain's claim; a miss on a chain with no test running, or on one whose claim
+  // fills too slowly to weigh them (per_miss: every miss alerts at once), stays a failure); else null.
+  function weighed(v) {
+    if (v.phase === "calibration" || hardFail(v)) return null;
+    const mc = missChains(v); if (!mc.length) return null;
+    const known = weighChains();
+    return mc.every(ch => known.includes(ch)) ? mc : null;
+  }
+  function verdict(v) {
+    const w = weighChains().length ? weighed(v) : null;
+    if (w) return ["warn", (w.length > 1 ? w.join(", ") + " over deadline" : verdict0(v)[1]) + " · weighed by the claim"];
+    const [cls, text] = verdict0(v);
+    if (v.retried_by != null && cls === "fail" && !v.miss_confirmed && !hardFail(v))     // a timing miss a fresh challenge did not repeat
+      return ["warn", `${text} · retry #${v.retried_by} passed`];
+    if (v.retried_by != null && v.miss_confirmed) return [cls, `${text} · confirmed by #${v.retried_by}`];
+    return [cls, v.retry_of != null ? `retry of #${v.retry_of}: ${text}` : text];
+  }
+  function verdict0(v) {
+    if (v.phase === "calibration") return ["cal", "calibration"];
+    if (v.check_error != null) return ["fail", "check failed: " + v.check_error];
+    if (v.faults && v.faults.length) return v.faults_flagged ? ["warn", v.faults.join("; ") + " · flag: the claim counts it at the clip"] : ["fail", v.faults.join("; ")];
+    if (v.digest_ok === false) return ["fail", "digest mismatch"];
+    if (lateHard(v)) return ["fail", v.round === "dynamic" ? "dynamic: late READY" : "late READY"];
+    if (v.dyn && dynLateHard(v.dyn)) return ["fail", "dynamic: late READY"];
+    if (v.late_ready_flagged || (v.dyn && v.dyn.late_ready_flagged)) return ["warn", (v.round === "dynamic" ? "dynamic: " : "") + "late READY · flag: its chains count at the clip"];
+    if (v.late_ready || (v.dyn && v.dyn.late_ready)) return ["warn", (v.round === "dynamic" ? "dynamic: " : "") + "late READY · counted, not alerted"];
+    if (v.gross && v.gross.length) return ["fail", "gross: " + v.gross[0]];       // over the ceiling × its deadline: alerted at once
+    if (v.flagged && v.flagged.length) return ["warn", "flag: " + v.flagged[0]];    // the same under --challenge-flags warn: the claim weighs it
+    if (v.within === false && v.round !== "dynamic") return ["fail", "over deadline"];   // a dynamic round's within is its chains': below
+    if (v.memory && v.memory.impossible) return ["fail", "memory impossible (more than the GPU holds)"];
+    if (v.memory && v.memory.over) return ["fail", "memory over bound"];
+    if (v.dyn && v.dyn.live && v.dyn.live.within === false) return ["fail", "live chain over deadline"];
+    if (v.dyn && v.dyn.within === false) return ["fail", "dynamic over deadline"];
+    if (v.dyn_digest_ok === false) { const c = v.dyn_check || {}; return ["fail", c.error && !c.replayed ? "dynamic record failed: " + c.error : "dynamic replay mismatch"]; }
+    if (v.response_checks_skipped) return ["cal", "timed only"];
+    if (v.unchecked) return ["fail", "not checked (the run stopped first)"];
+    // a dynamic round has no static digest (its check carries digest_ok true): only its record is waited for
+    const digestPending = v.round !== "dynamic" && v.digest_ok !== true, dynPending = v.dyn && !v.dyn_checked;
+    if (v.within === true && !digestPending && !dynPending) {
+      if (v.dyn && v.dyn_digest_ok == null)                   // bound, not replayed online: kept for memory_accounting.verifier.consistency, unless the cap was hit
+        return v.record_saved === false ? ["warn", `pass · record bound, not kept (${esc(v.not_kept || "cap")})`] : ["pass", "pass · dynamic stored"];
+      return ["pass", v.record_saved === false ? "pass · record not kept (cap)" : "pass"];
+    }
+    if (v.within === true) return ["pend", "pass · checking " + (digestPending ? "digest" : "record")];
+    return ["pend", "…"];
+  }
+
+  function renderToggles() {
+    const allowed = (meta.allowed && meta.allowed.strategies) || [];
+    const on = new Set((meta.control && meta.control.strategies) || []);
+    setHTML($("toggles"), allowed.map(s => `<button class="tog ${on.has(s) ? "on" : ""}" data-s="${esc(s)}">${dot(s)}${esc(s)}</button>`).join("")
+      || `<span class="muted" style="font-size:12px">no strategies offered by this run</span>`);
+  }
+  $("toggles").addEventListener("click", e => {
+    const b = e.target.closest("button.tog"); if (!b) return;
+    const on = new Set((meta.control && meta.control.strategies) || []);
+    on.has(b.dataset.s) ? on.delete(b.dataset.s) : on.add(b.dataset.s);
+    fetch("/control", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ strategies: [...on] }) })
+      .then(r => r.json()).then(c => { meta.control = c; dirty = true; }).catch(() => {});
+  });
+
+  // What a single deadline miss does: a chain whose claim weighs it (only a gross one alerts at once); the
+  // others alert at once, or after a fresh challenge misses too (--confirm-misses): a chain without a claim, and
+  // one whose claim fills too slowly to weigh its misses (per_miss).
+  function missPolicy() {
+    const base = meta.confirm_misses ? "confirmed by a fresh challenge before an alert" : "alerts at once";
+    const chs = weighChains(), per = claimChains().filter(ch => !chs.includes(ch));
+    const perNote = per.length ? ` (the claim on ${per.join(", ")} fills too slowly to weigh them)` : "";
+    if (!chs.length) return base + perNote;
+    const timed = ["static", ...(meta.dynamic ? ["dynamic"] : []), ...(meta.dynamic && ((meta.baseline || {}).dyn || {}).live ? ["live"] : [])];
+    const rest = timed.filter(ch => !chs.includes(ch));
+    const gross = meta.challenge_flags === "warn" ? "a gross miss or missing reply is a flag, counted at the clip" : "a gross miss alerts at once";
+    return `weighed by the timing claim (${chs.join(", ")}; ${gross})` + (rest.length ? `; ${rest.join(", ")}: ${base}${perNote}` : "");
+  }
+
+  function renderMeta() {
+    const b = meta.baseline || {};
+    const items = [
+      ["prover", meta.host], ["array", meta.size_bytes ? fmtB(meta.size_bytes) : ""],
+      ["block B", meta.B ? fmtB(meta.B) : ""], ["links n", meta.n], ["matrix r × k", meta.r != null ? `${meta.r} × ${meta.k}` : ""],
+      ["per verification", meta.repeat ? (meta.repeat > 1 ? `min of ${meta.repeat}` : "1 challenge") : ""],
+      ["drain window", meta.drain == null ? "" : (meta.drain ? "armed" : "off")],
+      ["honest median", b.median_ns ? us(b.median_ns) + " µs" : "—"], ["honest core <em class=\"u\">σ</em>", b.sigma_core_ns ? us(b.sigma_core_ns) + " µs" : "—"],
+      ["deadline", b.deadline_ns ? us(b.deadline_ns) + ` µs (${b.deadline_rule === "sigma" ? b.sigmas + "σ, floor " + (b.margin*100).toFixed(0) + "%" : "p99.9 + " + (b.margin*100).toFixed(0) + "%"})` : "—"],
+      // the honest figures above were measured against the prover under test: what it showed at calibration
+      // sets the deadlines and the claim, so a prover slow from the start is slow in its own baseline too
+      ...(meta.baseline_self_calibrated === true ? [["baseline", "calibrated on this prover (not independently trusted)", "quiet-warn",
+          "The honest median, σ and deadlines were measured on the prover being verified, not on a reference machine."]] : []),
+      ["timing", meta.timing === "kernel" ? "kernel timestamps (driver to driver)" : "user space"],
+      ["a miss on time", missPolicy()],
+      ["READY bound", b.arm_max_ns ? (b.arm_max_ns/1e6).toFixed(1) + " ms" + reload(b.arm_max_ns) : "—"],
+      ["honest rejected at calibration", b.honest_reject_rate != null ? (b.honest_reject_rate*100).toFixed(1) + " %" : "—"],
+    ];
+    if (meta.dynamic) {
+      const d = b.dyn || {};
+      items.push(["dynamic block / links", meta.dyn_B ? `${fmtB(meta.dyn_B)} × ${meta.dyn_n}` : ""],
+                 ["dynamic honest median", d.median_ns ? us(d.median_ns) + " µs" : "—"],
+                 ["dynamic deadline", d.deadline_ns ? us(d.deadline_ns) + " µs" : "—"],
+                 ["live chain deadline", d.live && d.live.deadline_ns ? us(d.live.deadline_ns) + " µs" : "—"],
+                 ["pause bound", d.arm_max_ns ? (d.arm_max_ns/1e6).toFixed(1) + " ms" + reload(d.arm_max_ns) : "—"]);
+    }
+    // the records kept for memory_accounting.verifier.consistency: once --evidence-max-total is reached the verifier stops saving them
+    // (meta evidence_saving false, one "evidence" alert); later records are still checked, not kept
+    const evAlert = alerts.find(a => a.kind === "evidence"), evStopped = meta.evidence_saving === false || !!evAlert;
+    if (meta.response_checks === false) items.push(["response checks", "disabled for throughput benchmarking", "", ""]);
+    if (meta.response_checks !== false && (meta.dynamic || meta.evidence_dir || evStopped))
+      items.push(["evidence kept at", (meta.evidence_dir || (evStopped ? "" : "not kept (no --evidence-dir)"))
+        + (evStopped ? (meta.evidence_dir ? " · " : "") + "saving stopped" + (evAlert ? ": " + evAlert.detail : " (record cap reached)") : ""),
+        evStopped ? "quiet-warn" : "", evStopped ? "Records after this point are checked but not kept for the offline consistency check." : ""]);
+    $("meta").innerHTML = items.map(([k, v, cls, tip]) => `<div${cls ? ` class="${cls}"` : ""}${tip ? ` title="${esc(tip)}"` : ""}><span>${k}</span><b>${esc(v)}</b></div>`).join("");
+    if (!connected) setState("disconnected"); else if (meta.state) setState(meta.state);
+    $("where").textContent = meta.manifest ? `bundle ${meta.manifest}` : "synthetic array";
+  }
+
+  // Per strategy: the static rounds' figures (round trip, deadline, digests) and the dynamic rounds' apart (their
+  // chains' deadlines and replays). A dynamic round's check carries digest_ok true and its "within" is its own
+  // chains': counted with the static ones, a failed replay read as a good digest. (An older log's verification
+  // carries both: it counts in both.)
+  function stats(ids) {
+    const by = {};
+    for (const id of ids) {
+      const v = vers.get(id); if (!v || v.phase === "calibration") continue;
+      const s = by[v.strategy] || (by[v.strategy] = { n: 0, within: 0, ok: 0, checked: 0, rtts: [], dn: 0, dwithin: 0, dok: 0, dchecked: 0, dstored: 0 });
+      if (v.round !== "dynamic") {
+        s.n++; if (v.within && !v.late_ready) s.within++;
+        if (v.digest_ok != null) { s.checked++; if (v.digest_ok) s.ok++; }
+        if (v.rtt_ns != null) s.rtts.push(v.rtt_ns);
+      }
+      if (v.dyn) {
+        s.dn++; if (v.dyn.within !== false && !v.dyn.late_ready && !v.dyn.fault && !(v.dyn.live && v.dyn.live.within === false) && (v.round !== "dynamic" || v.within !== false)) s.dwithin++;
+        if (v.dyn_checked) { if (v.dyn_digest_ok == null) s.dstored++; else { s.dchecked++; if (v.dyn_digest_ok) s.dok++; } }
+      }
+    }
+    return by;
+  }
+  const median = a => { if (!a.length) return NaN; const b = [...a].sort((x, y) => x - y); return b[Math.floor(b.length/2)]; };
+
+  function renderSummary() {
+    const by = stats(order); const b = meta.baseline || {};
+    const rows = STRATS.filter(s => by[s]).map(s => {
+      const x = by[s]; const med = median(x.rtts);
+      const gap = (b.sigma_core_ns && s !== "honest") ? ((med - b.median_ns) / b.sigma_core_ns).toFixed(0) + "σ" : "";
+      return `<tr><td>${dot(s)}${esc(s)}</td><td class="num">${x.n}</td>
+        <td class="num">${x.within}/${x.n}</td><td class="num">${x.ok}/${x.checked}</td>
+        <td class="num">${x.rtts.length ? us(med) + " µs" : "—"}</td><td class="num">${x.rtts.length ? gap : ""}</td>
+        <td class="num dyn-only">${x.dn}</td><td class="num dyn-only">${x.dwithin}/${x.dn}</td>
+        <td class="num dyn-only">${x.dok}/${x.dchecked}${x.dstored ? ` · ${x.dstored} stored` : ""}</td></tr>`;
+    });
+    $("summary").innerHTML = rows.join("") || `<tr><td colspan="9" class="empty">waiting for verifications</td></tr>`;
+  }
+
+  function renderProver(p) {
+    const items = [["served", p.served], ["fired pre-armed", p.fired], ["armed", p.armed], ["holds expired", p.hold_expired],
+      ["in-process p50 / p99", p.svc_p50_ns ? `${us(p.svc_p50_ns)} / ${us(p.svc_p99_ns)} µs` : "—"],
+      ["launch+sync p50 / p99", p.dt_p50_ns ? `${us(p.dt_p50_ns)} / ${us(p.dt_p99_ns)} µs` : "—"]];
+    $("prover").innerHTML = items.map(([k, v]) => `<div><span>${k}</span><b>${esc(v)}</b></div>`).join("");
+  }
+
+  function dynCell(v) {
+    if (!v.dyn) return "";
+    const d = v.dyn, c = v.dyn_check || {};
+    const where = c.stage != null ? (c.in_flight ? `layer ${esc(c.act_layer)}/${esc(c.n_layers)}` : "step done") : (d.in_flight ? "mid-step" : "idle");
+    if (d.late_ready) return `<span class='v fail'>late READY</span>`;
+    if (v.check_error != null) return `<span class='v fail'>check failed</span> · ${where}`;
+    const notChecked = v.unchecked ? " · <span class='v fail'>not checked</span>" : "";      // (its record too, when it also missed)
+    if (d.live && d.live.within === false) return `<span class='v fail'>live chain over deadline</span>${notChecked} · ${where}`;
+    if (d.within === false) return `<span class='v fail'>over deadline</span>${notChecked} · ${where}`;
+    // a record that did not come, did not parse or does not bind to the chains: the verifier's reason (it may
+    // quote what the prover sent: escaped)
+    if (v.dyn_digest_ok === false) return `<span class='v fail'>${c.error && !c.replayed ? esc(c.error) : "replay mismatch"}</span> · ${where}`;
+    if (v.unchecked) return `<span class='v fail'>not checked</span> · ${where}`;
+    if (v.response_checks_skipped) return "timed only";
+    if (!v.dyn_checked) return `<span class='muted'>fetching record</span> · ${where}`;
+    const kept = v.record_saved === false ? " · <span class='v warn'>record not kept (cap)</span>" : "";
+    if (v.dyn_digest_ok == null) return (v.record_saved === false ? "bound" : "stored") + `${kept} · ${where}`;
+    return `replayed exactly${kept} · ${where}`;
+  }
+
+  const setPaused = on => { paused = on; frozen = [...order]; $("pause").classList.toggle("on", paused); $("pause").textContent = paused ? "resume table" : "pause table"; dirty = true; };
+  $("pause").addEventListener("click", () => setPaused(!paused));
+  function renderRows() {
+    const out = [];
+    for (const id of (paused ? frozen : order)) {
+      const v = vers.get(id); if (!v) continue;
+      const [cls, text] = verdict(v);
+      const t = new Date(v.t * 1000).toLocaleTimeString();
+      const dig = v.round === "dynamic" ? (v.check_error != null ? "<span class='v fail'>check failed</span>" : "—")   // no static digest in this round
+        : v.check_error != null ? "<span class='v fail'>check failed</span>"
+        : v.response_checks_skipped ? "timed only"
+        : v.digest_ok == null ? (v.unchecked ? "<span class='v fail'>not checked</span>" : "<span class='muted'>checking</span>")
+        : (v.digest_ok ? "ok" : "<span class='v fail'>mismatch</span>");
+      const stratCell = isMonitor() ? "" : `<td>${dot(v.strategy)}${esc(v.strategy)}</td>`;
+      out.push(`<tr class="row" data-id="${esc(id)}"><td>${esc(id)}</td><td>${t}</td>${stratCell}
+        <td class="v ${cls}">${esc(text)}</td><td class="num">${us(v.rtt_ns)}</td><td class="num">${v.arm_ns ? us(v.arm_ns) : ""}</td>
+        <td class="num">${v.gap_sigma != null ? (v.gap_sigma >= 0 ? "+" : "") + v.gap_sigma.toFixed(1) : ""}</td><td>${dig}</td>
+        <td class="num dyn-only">${v.dyn ? us(v.dyn.rtt_ns) : ""}</td><td class="num dyn-only">${v.dyn && v.dyn.live ? us(v.dyn.live.rtt_ns) : ""}</td><td class="dyn-only">${dynCell(v)}</td></tr>`);
+      if (expanded.has(id)) {
+        const exp = {}; (v.expected || []).forEach(c => exp[c.nonce] = c);
+        const lines = (v.challenges || []).map((c, i) => {
+          const e = exp[c.nonce];
+          return `challenge ${i+1}: nonce ${esc(c.nonce)}  start block ${esc(c.j0)}  rtt ${us(c.rtt_ns)} µs${c.arm_ns ? "  arm " + us(c.arm_ns) + " µs" : ""}<br>` +
+                 `&nbsp;&nbsp;received  ${esc(c.received)}<br>` +
+                 `&nbsp;&nbsp;expected  ${e ? esc(e.expected + (e.ok ? "  ✓" : "  ✗ mismatch")) : (v.response_checks_skipped ? "timed only" : "<span class='muted'>pending</span>")}`;
+        });
+        const dl = v.deadline_ns ? `deadline ${us(v.deadline_ns)} µs; ` : "";
+        if (v.dyn) {
+          const d = v.dyn, c = v.dyn_check || {};
+          lines.push(`dynamic: nonce ${esc(d.nonce)}  start block ${esc(d.j0)} of ${esc(d.blocks)}  region ${fmtB(d.words * 8)}  rtt ${us(d.rtt_ns)} µs  pause wait ${us(d.arm_ns)} µs` +
+                     (d.deadline_ns ? `  deadline ${us(d.deadline_ns)} µs` : "") + `  ${d.in_flight ? "paused mid-step" : "no step in flight"}<br>` +
+                     `&nbsp;&nbsp;received  ${esc(d.received)}<br>` +
+                     `&nbsp;&nbsp;replayed  ${!v.dyn_checked ? (v.response_checks_skipped ? "timed only" : v.unchecked ? "<span class='v fail'>not checked (the run stopped first)</span>" : "<span class='muted'>pending</span>")
+                       : v.dyn_digest_ok == null ? (v.record_saved === false ? "<span class='muted'>not replayed online; record not kept (cap)</span>" : "<span class='muted'>not replayed online (record stored)</span>") : esc((c.expected || "") + (v.dyn_digest_ok ? "  ✓ exact" : "  ✗ " + (c.error || "mismatch")))}` +
+                     (c.differing_segments ? `<br>&nbsp;&nbsp;differs   ${esc(c.differing_segments.map(d => d && d.name).join(", "))}` : "") +
+                     (c.stage ? `<br>&nbsp;&nbsp;stage     ${esc(c.stage + (c.path ? "  → " + c.path : ""))}` : ""));
+          if (d.live) {
+            const lc = c.live || {};
+            lines.push(`live chain: nonce ${esc(d.live.nonce)}  start block ${esc(d.live.j0)} of ${esc(d.live.blocks)}  region ${fmtB(d.live.words * 8)}  rtt ${us(d.live.rtt_ns)} µs` +
+                       (d.live.deadline_ns ? `  deadline ${us(d.live.deadline_ns)} µs` : "") + `<br>&nbsp;&nbsp;received  ${esc(d.live.received)}<br>` +
+                       `&nbsp;&nbsp;replayed  ${!v.dyn_checked ? "<span class='muted'>" + (v.response_checks_skipped ? "timed only" : v.unchecked ? "not checked" : "pending") + "</span>" : lc.digest_ok == null ? "<span class='muted'>not replayed online" + (v.record_saved === false ? "; record not kept (cap)" : " (record stored)") + "</span>" : esc((lc.expected || "") + (lc.digest_ok ? "  ✓ exact" : "  ✗ " + (lc.error || "mismatch")))}`);
+          }
+        }
+        if (v.check_error != null) lines.push(`<span class='v fail'>check failed:</span> ${esc(v.check_error)}`);
+        if (v.unchecked) lines.push(`<span class='v fail'>not checked:</span> the run stopped before this round's ${v.round === "dynamic" ? "record" : "digest"} check (a failed check)`);
+        if (v.memory && meta.memory) {
+          // meta static_bytes is the credited figure (static_credited_bytes the same; static_array_bytes the raw size)
+          const mm = v.memory, stc = mm.static_credited_bytes ?? meta.memory.static_credited_bytes ?? meta.memory.static_bytes;
+          lines.push(`memory: ${fmtB(meta.memory.capacity_bytes)} capacity − ${fmtB(stc)} static, credited − ${fmtB(mm.dynamic_bytes)} dynamic, credited`
+            + ` = ${fmtB(mm.unchecked_bytes)} unchallenged or uncredited`
+            + (mm.dynamic_region_bytes != null && (meta.dynamic || mm.dynamic_region_bytes) ? ` (dynamic region ${fmtB(mm.dynamic_region_bytes)}`
+               + (mm.live_region_bytes ? `, live region ${fmtB(mm.live_region_bytes)} ` + (meta.memory.dyn_encoded ? "encoded and credited" : "checked, not credited") : "") + ")" : "")
+            + (mm.impossible ? "; <span class='v fail'>impossible: more than the GPU holds</span>" : "")
+            + (meta.memory.bound_bytes ? `; bound ${fmtB(meta.memory.bound_bytes)}${mm.over && !mm.impossible ? ", <span class='v fail'>over</span>" : ""}` : ""));
+        }
+        out.push(`<tr class="detail"><td colspan="${(isMonitor() ? 7 : 8) + (meta.dynamic ? 3 : 0)}">${dl}min RTT ${us(v.rtt_ns)} µs${v.late_ready ? "; READY arrived late" : ""}<br>${lines.join("<br>")}</td></tr>`);
+      }
+    }
+    $("rows").innerHTML = out.join("");
+  }
+  $("rows").addEventListener("click", e => {
+    const tr = e.target.closest("tr.row"); if (!tr) return;
+    const id = +tr.dataset.id; expanded.has(id) ? expanded.delete(id) : expanded.add(id);
+    if (!paused) setPaused(true);
+    renderRows();
+  });
+
+  // ---- charts (canvas, device-pixel aware)
+  function prep(c) {
+    const r = c.getBoundingClientRect(); const dpr = window.devicePixelRatio || 1;
+    if (c.width !== Math.round(r.width*dpr) || c.height !== Math.round(r.height*dpr)) { c.width = Math.round(r.width*dpr); c.height = Math.round(r.height*dpr); }
+    const g = c.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, r.width, r.height);
+    return [g, r.width, r.height];
+  }
+  const axisColor = () => getComputedStyle(document.documentElement).getPropertyValue("--line").trim();
+  const inkColor = () => getComputedStyle(document.documentElement).getPropertyValue("--ink-muted").trim();
+
+  // Robust axis: a single stall must not flatten the rest. Range = [min, max(p99, 1.4 × deadline)];
+  // values beyond it are drawn at the edge.
+  const quant = (a, q) => { if (!a.length) return NaN; const b = [...a].sort((x, y) => x - y); return b[Math.min(b.length - 1, Math.floor(q * b.length))]; };
+  function yRange(vals, b) {
+    let lo = Math.min(...vals), hi = quant(vals, 0.99);
+    if (b.deadline_ns) { lo = Math.min(lo, b.median_ns); hi = Math.max(hi, b.deadline_ns * 1.4); }
+    const pad = (hi - lo) * 0.08 || 1; return [lo - pad, hi + pad];
+  }
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  function renderTimeline() {
+    const [g, W, H] = prep($("timeline")); const b = meta.baseline || {};
+    const ids = [...order].reverse().filter(id => vers.get(id)?.phase !== "calibration" && vers.get(id)?.rtt_ns != null).slice(-400);   // no reply: no point to plot
+    if (!ids.length) return;
+    const L = 56, R = 10, T = 8, Bm = 22; const pw = W - L - R, ph = H - T - Bm;
+    const vals = ids.map(id => vers.get(id).rtt_ns / 1e3);
+    const [y0, y1] = yRange(vals, { deadline_ns: b.deadline_ns/1e3, median_ns: b.median_ns/1e3 });
+    const y = v => T + ph - (clamp(v, y0, y1) - y0) / (y1 - y0) * ph; const x = i => L + (ids.length === 1 ? pw/2 : i / (ids.length - 1) * pw);
+    g.strokeStyle = axisColor(); g.fillStyle = inkColor(); g.font = "11px " + getComputedStyle(document.body).fontFamily; g.lineWidth = 1;
+    for (let k = 0; k <= 4; k++) { const v = y0 + (y1 - y0) * k / 4; g.beginPath(); g.moveTo(L, y(v)); g.lineTo(W - R, y(v)); g.stroke(); g.fillText(v.toFixed(0) + " µs", 4, y(v) + 4); }
+    if (b.deadline_ns) { g.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim(); g.beginPath(); g.moveTo(L, y(b.deadline_ns/1e3)); g.lineTo(W - R, y(b.deadline_ns/1e3)); g.stroke();
+      g.setLineDash([4, 4]); g.strokeStyle = color("honest"); g.beginPath(); g.moveTo(L, y(b.median_ns/1e3)); g.lineTo(W - R, y(b.median_ns/1e3)); g.stroke(); g.setLineDash([]); }
+    ids.forEach((id, i) => { const v = vers.get(id); g.fillStyle = isMonitor() ? inkColor() : color(v.strategy); g.beginPath(); g.arc(x(i), y(v.rtt_ns/1e3), v.within === false || v.late_ready || v.digest_ok === false ? 3.5 : 2.5, 0, 7); g.fill();
+      if (v.within === false || v.late_ready || v.digest_ok === false) { g.strokeStyle = color("dram_copy"); g.beginPath(); g.arc(x(i), y(v.rtt_ns/1e3), 5.5, 0, 7); g.stroke(); } });
+    $("legend").innerHTML = STRATS.filter(s => ids.some(id => vers.get(id).strategy === s)).map(s => `<span>${dot(s)}${esc(s)}</span>`).join("") +
+      `<span><span class="dot" style="background:transparent;border:1.5px solid ${esc(color("dram_copy"))}"></span>failed verification</span>`;
+  }
+  function renderDist() {
+    const [g, W, H] = prep($("dist")); const b = meta.baseline || {};
+    const by = stats(order); const strats = STRATS.filter(s => by[s]);
+    if (!strats.length) return;
+    const all = strats.flatMap(s => by[s].rtts.map(v => v / 1e3));
+    const [x0, x1] = yRange(all, { deadline_ns: b.deadline_ns/1e3, median_ns: b.median_ns/1e3 });
+    const L = 90, R = 10, T = 6, Bm = 22; const pw = W - L - R, rowH = (H - T - Bm) / strats.length;
+    const x = v => L + (v - x0) / (x1 - x0) * pw;
+    g.font = "11px " + getComputedStyle(document.body).fontFamily; g.lineWidth = 1;
+    strats.forEach((s, i) => {
+      const yTop = T + i * rowH, vals = by[s].rtts.map(v => v / 1e3);
+      const bins = 60, counts = new Array(bins).fill(0);
+      vals.forEach(v => counts[clamp(Math.floor((v - x0) / (x1 - x0) * bins), 0, bins - 1)]++);
+      const mx = Math.max(...counts) || 1;
+      g.fillStyle = color(s);
+      counts.forEach((c, k) => { if (!c) return; const h = (rowH - 6) * c / mx; g.globalAlpha = 0.8; g.fillRect(L + k / bins * pw, yTop + rowH - 3 - h, pw / bins - 0.5, h); });
+      g.globalAlpha = 1; g.fillStyle = inkColor(); g.fillText(s, 4, yTop + rowH / 2 + 4);
+      g.strokeStyle = axisColor(); g.beginPath(); g.moveTo(L, yTop + rowH - 3); g.lineTo(W - R, yTop + rowH - 3); g.stroke();
+    });
+    g.fillStyle = inkColor();
+    for (let k = 0; k <= 5; k++) { const v = x0 + (x1 - x0) * k / 5; g.fillText(v.toFixed(0) + (k === 5 ? "+ µs" : ""), x(v) - (k === 5 ? 34 : 10), H - 6); }
+    if (b.deadline_ns) { g.strokeStyle = color("dram_copy"); g.beginPath(); g.moveTo(x(b.deadline_ns/1e3), T); g.lineTo(x(b.deadline_ns/1e3), H - Bm); g.stroke(); }
+  }
+
+  // One chain's claim state: [banner class ok|warn|alert|off, sentence, short form]. Each test that runs on the
+  // chain has its state (the latest window or period decides, as for a single claim; the miss count fails
+  // while its alarm is inside the current miss window) and the worst of them is the chain's. A chain on which
+  // no test runs is "off" and says why: it is no claim, and weighs nothing.
+  const SEVERITY = { alert: 0, warn: 1, ok: 2 };
+  function claimStatus(ch) {
+    const st = claims.get(ch), c = st.info, tests = testsOf(c);
+    if (!tests.length) return ["off", `Claim off: ${c.reason || "no test runs on this chain"}`, "claim off: " + (c.reason || "no test runs")];
+    const main = tests.includes("period") ? meanStatus(st, c, true) : tests.includes("window") ? meanStatus(st, c, false) : null;
+    const mc = tests.includes("misses") ? missStatus(st, c) : null;
+    if (!main) return mc;
+    if (!mc || SEVERITY[main[0]] < SEVERITY[mc[0]] || (main[0] === mc[0] && main[0] !== "ok")) return main;
+    if (SEVERITY[mc[0]] < SEVERITY[main[0]]) return mc;
+    return ["ok", `${main[1]}; ${mc[1][0].toLowerCase() + mc[1].slice(1)}`, main[2]];      // both fine: the mean test's short form
+  }
+  // the miss count's figures: x misses of the last n round trips, alarm at k of a window of W
+  function missFigures(st, c) {
+    const mp = st.misses || {}, mi = c.misses || {};
+    return { x: mp.misses ?? 0, n: mp.misses_n ?? 0, k: mp.misses_k ?? mi.k ?? null, W: mp.misses_window ?? mi.window ?? null };
+  }
+  const missText = f => `${f.x} of ${f.k ?? "—"} misses in the last ${f.n}`;
+  function missStatus(st, c) {
+    const f = missFigures(st, c), a = st.missAlarm;
+    if (a) return ["alert", `Too many deadline misses: ${f.k ?? "—"} of ${f.W ?? "—"} round trips (alarm at #${a.id}); failed until ${f.W ?? "—"} round trips have passed since (${f.n} so far)`, "too many misses"];
+    if (st.missFlag) return ["warn", `Many deadline misses: ${f.k ?? "—"} of ${f.W ?? "—"} round trips (flag at #${st.missFlag.id}, outside the claim, which weighs them)`, "miss flag"];
+    return ["ok", `Miss count: ${missText(f)} (an alarm at ${f.k ?? "—"} of ${f.W ?? "—"})`, missText(f)];
+  }
+  function meanStatus(st, c, period) {
+    const w = st.verdicts[0], pr = st.progress;
+    if (period) {
+      if (w && w.test === "fail") return ["alert", `Claim fails over period ${w.period}: the sum is over its threshold (mean ${sgn(w.mean_shift, 2)} µs, τ ${prec(w.tau, 3)} µs)`, "fails"];
+      if (w && !w.supports_target) return ["warn", `Period ${w.period}: passed, but too few chains to show the target ${c.F}: they show F ≤ ${prec(w.F_testable, 3)}`, "below the target"];
+      if (w) return ["ok", `Claim holds over period ${w.period}: at most ${prec(w.F_testable, 3)} of reads deviated`, "holds"];
+      const p = pr && pr.period != null ? pr.period : st.verdicts.length + 1;
+      return ["ok", `Period ${p} in progress: ${pr && pr.n != null ? pr.n : 0} chains, mean ${sgn(pr && pr.mean_shift, 2)} µs (threshold now ${prec(pr && pr.tau, 3)} µs)`, `period ${p} in progress`];
+    }
+    if (!w) return ["ok", `Claim: first window in progress (${pr && pr.n != null ? pr.n : 0} of ${c.n_window ?? "—"} challenges)`, "first window in progress"];
+    if (!w.pass) return ["alert", `Claim fails: window ${w.window}, mean ${sgn(w.mean_shift, 1)} µs, over τ ${fix(w.tau, 1)}`, "fails"];
+    if (w.baseline_moved) return ["warn", `Claim holds, window ${w.window}: but the honest level is ${fix(w.mean_shift == null ? null : -w.mean_shift, 1)} µs below the calibration (recalibrate)`, "holds, baseline moved"];
+    return ["ok", `Claim holds: window ${w.window}, mean ${sgn(w.mean_shift, 1)} µs (τ ${fix(w.tau, 1)} µs), at most ${c.F == null ? "—" : (100 * c.F).toPrecision(2)} % deviating`, "holds"];
+  }
+
+  function renderMonitor() {
+    const vs = order.map(id => vers.get(id)).filter(v => v && v.phase !== "calibration");
+    const n = vs.length, passed = vs.filter(v => verdict(v)[0] === "pass").length;   // not a weighed miss, not one still being checked
+    $("c-n").textContent = n; $("c-pass").textContent = passed; $("c-alerts").textContent = alerts.length;
+    const withCusum = vs.find(v => v.cusum != null);                          // (a static round's: dynamic rounds have none)
+    $("c-cusum").textContent = withCusum ? withCusum.cusum.toFixed(1) : "0.0";
+    // An alert keeps the banner red for ALERT_HOLD_S on the verifier's clock, whatever round it names (a late
+    // replay, a lag or an unchecked report name old rounds); the newest one is shown, with how many more there
+    // were. Rounds left unchecked at the stop keep it red for good: the run's checks are incomplete.
+    const live = alerts.filter(a => a._t >= streamT - ALERT_HOLD_S);
+    const recentIsLive = live.length > 0 || !!uncheckedEv;
+    const alertText = () => uncheckedEv ? "Alert: " + (uncheckedEv.detail || "rounds left unchecked at the stop")
+      : "Alert: " + live[0].detail + (live.length > 1 ? ` (+${live.length - 1} more in the last ${ALERT_HOLD_S} s)` : "");
+    const chs = claimChains(), offs = infoChains().filter(ch => !chs.includes(ch));
+    const offNote = offs.length ? ` · claim off on ${offs.join(", ")}` : "";
+    let cls, text;
+    if (chs.length) {                                                         // the banner states the timing claims
+      const held = ch => { const st = claims.get(ch), c = st.info, t = testsOf(c), vs = st.verdicts;
+        return t.includes("period") ? `${vs.filter(x => x.supports_target).length} of ${vs.length} periods`
+             : t.includes("window") ? `${vs.filter(x => x.pass).length} of ${vs.length}`
+             : `${st.missAlarms.length} miss alarm${st.missAlarms.length === 1 ? "" : "s"}`; };
+      $("c-windows").textContent = chs.length === 1 ? held(chs[0]) : chs.map(ch => `${ch} ${held(ch)}`).join(" · ");
+      const misses = vs.filter(v => weighed(v)).length;                       // misses the claims weigh (the others alerted at once)
+      $("c-misses").textContent = n ? `${misses} (${(100 * misses / n).toFixed(1)} %)` : "0";
+      if (!n && recentIsLive) { text = alertText(); cls = "alert"; }           // an alert during calibration (memory, a missing reply)
+      else if (!n) { text = "Calibrating the honest baseline"; cls = "warn"; }
+      else {                                                                  // the worst chain sets the banner: a failure on any chain shows
+        const sts = chs.map(ch => [ch, ...claimStatus(ch)]);
+        const bad = sts.filter(s => s[1] === "alert"), warn = sts.filter(s => s[1] === "warn");
+        const named = ([ch, , t]) => chs.length > 1 ? `${cap1(ch)} chain · ${t}` : t;
+        if (recentIsLive) { text = alertText(); cls = "alert"; }
+        else if (bad.length) { text = named(bad[0]) + (bad.length > 1 ? ` (also failing: ${bad.slice(1).map(s => s[0]).join(", ")})` : ""); cls = "alert"; }
+        else if (warn.length) { text = named(warn[0]) + offNote; cls = "warn"; }
+        else if (chs.length === 1) { text = sts[0][2] + offNote; cls = "ok"; }
+        else { text = (sts.every(s => s[3] === "holds") ? `Claim holds on every chain (${chs.join(", ")})` : "Claim: " + sts.map(s => `${s[0]} ${s[3]}`).join(" · ")) + offNote; cls = "ok"; }
+      }
+    }
+    else if (recentIsLive) { text = alertText(); cls = "alert"; }
+    else if (!n) { text = "Waiting for verifications"; cls = "ok"; }
+    else { text = "All recent verifications passing"; cls = "ok"; }
+    // a page that lost the verifier shows its last state greyed: it is no longer live. A run that ended does too,
+    // unless it ended failing (an alert in its last minute, rounds left unchecked): that stays red
+    if (!connected) { text = "Disconnected from the verifier · last seen: " + text; cls = "idle"; }
+    else if (meta.state === "stopped") { text = "Run stopped · last state: " + text; cls = cls === "alert" ? "alert" : "idle"; }
+    $("status").textContent = text; $("banner").className = "banner " + cls;
+    const listed = [...alerts.slice(0, 200), ...flags.slice(0, 200)].sort((a, b) => b._t - a._t).slice(0, 200);
+    $("alerts").innerHTML = listed.map(a => `<tr><td>${new Date(a._t * 1000).toLocaleTimeString()}</td><td>${esc(a.id)}${a.oldest_id != null && a.oldest_id !== a.id ? ` <span class="muted">(from #${esc(a.oldest_id)})</span>` : ""}</td>`
+      + `<td class="v ${a.type === "flag" ? "warn" : "fail"}">${esc(a.type === "flag" ? "flag · " + a.kind : a.kind + (a.outside_claim ? " · single challenge" : ""))}</td><td style="white-space:normal">${esc(a.detail)}</td></tr>`).join("")
+      || `<tr><td colspan="4" class="empty">no alerts</td></tr>`;
+    const allowed = (meta.allowed && meta.allowed.strategies) || [];
+    setHTML($("postures"), allowed.map(s => `<button class="tog ${proverPosture === s ? "on" : ""}" data-p="${esc(s)}">${dot(s)}${esc(s)}</button>`).join(""));
+    $("posture-now").textContent = proverPosture ? `prover simulator posture now: ${proverPosture}` : "prover posture unknown (waiting for the prover's stats)";
+  }
+  $("postures").addEventListener("click", e => {
+    const b = e.target.closest("button.tog"); if (!b) return;
+    fetch("/posture", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ posture: b.dataset.p }) }).catch(() => {});
+  });
+
+  function renderMemory() {
+    const m = meta.memory; if (!m || !m.capacity_bytes) return;
+    // The latest verification's accounting: capacity − static (credited) − dynamic (credited) = the rest, which is
+    // unchallenged (the prover's scratch) or challenged but not credited: the live region (checked, not
+    // credited, unless the region is encoded), the filler bits a prover could pack away, and a bundle's static
+    // part that is not credited.
+    const latest = order.map(id => vers.get(id)).find(v => v && v.memory);
+    const mm = latest ? latest.memory : {};
+    // meta static_bytes is the static array's credited size (static_credited_bytes the same), static_array_bytes
+    // its raw size; an older log put the credited figure on each verification and the raw one in static_bytes
+    const cap = m.capacity_bytes, st = mm.static_credited_bytes ?? m.static_credited_bytes ?? m.static_bytes, dy = mm.dynamic_bytes || 0;
+    const raw = m.static_array_bytes ?? (mm.static_credited_bytes != null ? m.static_bytes : null);
+    const un = latest ? mm.unchecked_bytes : cap - st;
+    const stUncredited = raw != null && st != null ? Math.max(0, raw - st) : 0;
+    // VDE: 62 of every 64 bits are credited (two are always zero: a prover packs them away for free); a credit
+    // well under that is a stream-decode bundle whose Θ' (the encoded weights) is not credited at all
+    const bundleTheta = raw != null && st != null && st < raw * 62 / 64 * 0.999;
+    const dynUncredited = mm.dynamic_region_bytes != null ? Math.max(0, mm.dynamic_region_bytes - dy) : 0;
+    const pct = x => x == null ? 0 : (100 * x / cap);
+    const bound = m.bound_bytes ? `<div class="bound" style="left:${(100 - pct(m.bound_bytes)).toFixed(2)}%" title="bound: at most ${fmtB(m.bound_bytes)} unchallenged or uncredited"></div>` : "";
+    $("membar").innerHTML = `<div class="static" style="width:${pct(st).toFixed(2)}%" title="static, credited: what the chains force a prover to hold of the static array"></div>` +
+      `<div class="dynamic" style="width:${pct(dy).toFixed(2)}%" title="dynamic, credited: KV cache + activations"></div>` +
+      `<div class="unchecked" style="width:${Math.max(0, pct(un)).toFixed(2)}%" title="unchallenged (the prover's scratch) or challenged but not credited"></div>` + bound;
+    const sw = c => `<span class="sw" style="background:var(--${c})"></span>`;
+    $("memlegend").innerHTML = `<span>${sw("teal")}static, credited${raw != null && raw !== st ? ` (of a ${fmtB(raw)} array)` : ""} <b>${fmtB(st)}</b> · ${pct(st).toFixed(1)} %</span>` +
+      (meta.dynamic ? `<span>${sw("violet")}dynamic, credited (KV cache + activations) <b>${fmtB(dy)}</b> · ${pct(dy).toFixed(1)} %</span>` : "") +
+      `<span>${sw("accent")}unchallenged or uncredited <b>${fmtB(un)}</b> · ${pct(un).toFixed(1)} %</span>` +
+      (m.bound_bytes ? `<span>bound <b>${fmtB(m.bound_bytes)}</b></span>` : "");
+    const vs = order.map(id => vers.get(id)).filter(v => v && v.memory && v.phase !== "calibration");
+    const impossible = vs.filter(v => v.memory.impossible).length, over = vs.filter(v => v.memory.over && !v.memory.impossible).length;
+    $("mem-sub").textContent = `capacity ${fmtB(cap)}${m.gpu_type ? " (" + m.gpu_type + ")" : ""}: the verifier's own figure, not the prover's`;
+    const parts = [];
+    if (stUncredited) parts.push(`Static array ${fmtB(raw)}, ${fmtB(st)} credited; ${fmtB(stUncredited)} challenged but not credited: `
+      + (bundleTheta ? "the bundle's Θ' (its encoded weights) is not credited at all, since without the weights' key the verifier cannot check that it "
+         + "encodes them (an audit can); of the filler it regenerates itself, " : "")
+      + "two bits of every encoded word are always zero, which a prover packs away for free.");
+    if (meta.dynamic && mm.dynamic_region_bytes != null) parts.push(`Dynamic region ${fmtB(mm.dynamic_region_bytes)}, ${fmtB(dy)} credited; ${fmtB(dynUncredited)} challenged but not credited`
+      + (m.dyn_encoded ? ` (the region is encoded throughout, the live region${mm.live_region_bytes ? ", " + fmtB(mm.live_region_bytes) + "," : ""} included: `
+         + "two bits of every encoded word are always zero, which a prover packs away for free)"
+         : mm.live_region_bytes ? ` (the live region, ${fmtB(mm.live_region_bytes)}, is checked, not credited; the rest is filler bits a prover could pack away)` : " (filler bits a prover could pack away)") + ".");
+    if (m.bound_bytes) parts.push(`${vs.length - over - impossible} of ${vs.length} verifications within the bound.`);
+    if (impossible) parts.push(`${impossible} of ${vs.length} verifications declared more memory than the GPU holds (impossible).`);
+    $("memnote").textContent = parts.concat(["Every byte credited is challenged: a prover that claims memory it does not hold fails the chains."]).join(" ");
+  }
+
+  function renderPeriodClaim(c, st, ch, lead, withMisses) {
+    const pct = pctOf(c.F, 2), conf = pctOf(c.C, 4), mins = fix(c.period_s == null ? null : c.period_s / 60, 0);
+    const reach = c.n_required ? `It needs ${c.n_required.toExponential(2)} chains a period (${prec(c.rate_required, 2)} per second)`
+                               : `It cannot be shown: slow movement of the honest level sets a floor of F ≥ ${prec(c.F_floor, 2)}`;
+    $("claim-statement").textContent = lead + `Period model: every ${mins} minutes, all the ${ch} chains of the period are analysed together. `
+      + `Target: at most ${pct} % of reads deviate (each ≥ ${c.delta_c_us ?? "—"} µs) with ${conf} % confidence. ${reach}; `
+      + `this pace gives about ${c.n_expected ? c.n_expected.toExponential(2) : "?"}. Each chain is clipped at the honest mean + M; the period fails if the sum of its chains `
+      + `exceeds the threshold an honest prover reaches with probability ${pctOf(c.alpha, 2)} %, and one that passes shows the smallest share its chains can. `
+      + (withMisses ? missSentence(st, c) : "");
+    const g = gk;
+    const items = [[`honest mean ${g("μ", "b")}`, fix(c.mu_b_us, 1) + " µs"], [`honest ${g("σ", "b")}`, fix(c.sigma_b_us, 1) + " µs" + (c.sigma_margin ? ` (+${pctOf(c.sigma_margin, 2)} %)` : "")],
+      ["chain length L", c.L], [`threshold ${g("τ", "")} at the target`, prec(c.tau_us, 3) + " µs"],
+      [`slow movement ${g("σ", "s")}`, c.sigma_s_us + " µs / " + fix(c.t_corr_s == null ? null : c.t_corr_s / 60, 0) + " min"], ["floor on F", prec(c.F_floor, 2)],
+      ["calibration", `${c.n_cal} responses over ${fix(c.cal_span_s == null ? null : c.cal_span_s / 60, 1)} min`], ["responses clipped at", c.clip_us ? `${c.clip_us.toFixed(0)} µs (μ + ${fix(c.M_us, 0)})` : "off"],
+      ...(withMisses ? missItems(st, c).slice(0, 2) : [])];
+    $("claim-kv").innerHTML = kvHTML(items);
+    const pr = st.progress;
+    const el = pr && pr.elapsed_s != null ? pr.elapsed_s : 0, n = pr && pr.n != null ? pr.n : 0;
+    $("claim-progress").style.width = (c.period_s ? Math.min(100, 100 * el / c.period_s) : 0).toFixed(1) + "%"; $("claim-progress").className = "fill";
+    $("claim-progress-label").textContent = `period ${pr ? pr.period : st.verdicts.length + 1}`;
+    $("claim-progress-n").textContent = `${(el / 60).toFixed(1)} of ${mins} min · ${n} chains` + (c.n_required ? ` of ${c.n_required.toExponential(1)} needed` : "");
+    const fub = pr && pr.F_testable != null ? pr.F_testable : null;
+    const span = Math.max(4 * c.F, (fub || 0) * 1.2, 1e-9);                     // the gauge runs from 0 to 4× the target; the target sits at a quarter
+    $("claim-shift").style.width = fub == null ? "0%" : Math.min(100, 100 * fub / span).toFixed(1) + "%";
+    $("claim-shift").className = "fill" + (fub != null && fub > c.F ? " bad" : "");
+    $("claim-tau").style.left = (100 * c.F / span).toFixed(1) + "%";
+    $("claim-shift-n").textContent = fub == null ? `target F ≤ ${c.F}` : `the chains so far can show F ≤ ${fub.toPrecision(3)} if the period passes (target ${c.F}; floor ${prec(pr.F_floor, 2)})`;
+    const ms = pr && pr.mean_shift != null ? pr.mean_shift : null, tau = pr && pr.tau != null ? pr.tau : c.tau_us;
+    $("claim-var").style.width = ms == null || !tau ? "0%" : Math.min(100, Math.max(0, 50 * ms / tau)).toFixed(1) + "%";
+    $("claim-var").className = "fill" + (ms != null && tau != null && ms >= tau ? " bad" : "");
+    $("claim-varlim").style.left = "50%";
+    $("claim-var-n").textContent = ms == null ? "" : `mean ${(ms >= 0 ? "+" : "") + ms.toFixed(2)} µs from the honest mean (threshold now ${prec(tau, 3)} µs; ${pr.clipped ?? 0} at the clip)`;
+    setHTML($("claim-verdicts"), (withMisses ? missChips(st) : "") + st.verdicts.slice(0, 30).map(v => `<span class="chip ${v.test === "fail" ? "bad" : v.supports_target ? "ok" : "warn"}" title="${esc(`period ${v.period}: ${v.n} chains, mean ${fix(v.mean_shift, 2)} µs, τ ${prec(v.tau, 3)} µs`)}">`
+      + esc(`period ${v.period}: ${v.test === "fail" ? "fails" : "F ≤ " + prec(v.F_testable, 3)} · test ${v.test}`) + `</span>`).join("") || `<span class="muted" style="font-size:12px">no period completed yet</span>`);
+  }
+
+  // One row per chain with a claim entry: the tests that run on it, its state (the same as the banner's) and
+  // what they found so far; a chain on which nothing runs says why. A click on a row shows that chain's
+  // figures and gauges below.
+  function renderClaimChains(chs) {
+    const rows = chs.map(ch => {
+      const st = claims.get(ch), c = st.info, tests = testsOf(c), [cls, , short] = claimStatus(ch);
+      const model = [], done = [];
+      if (tests.includes("period")) {
+        model.push(`period of ${fix(c.period_s == null ? null : c.period_s / 60, 0)} min`);
+        done.push(`${st.verdicts.filter(x => x.supports_target).length} of ${st.verdicts.length} periods support the target`);
+      } else if (tests.includes("window")) {
+        model.push(`window of ${c.n_window ?? "—"} challenges`);
+        done.push(`${st.verdicts.filter(x => x.pass).length} of ${st.verdicts.length} windows held`);
+      }
+      if (tests.includes("misses")) {
+        const f = missFigures(st, c);
+        model.push(`miss count: ${f.k ?? "—"} of ${f.W ?? "—"}`);
+        const al = `${st.missAlarms.length} miss alarm${st.missAlarms.length === 1 ? "" : "s"}`;
+        done.push(model.length > 1 ? `${missText(f)} · ${al}` : al);           // alone, the claim column has the count already
+      }
+      if (c.per_miss) model.push("every miss alerts");                       // its misses are not weighed: see the statement
+      const vcls = { alert: "fail", warn: "warn", ok: "pass", off: "off" }[cls];
+      return `<tr class="row${ch === selChain ? " sel" : ""}" data-chain="${esc(ch)}"><td>${esc(ch)}</td><td class="muted">${esc(model.join(" + ") || "—")}</td>`
+        + `<td class="v ${vcls}">${esc(short)}</td><td class="muted">${esc(done.join(" · ") || "—")}</td></tr>`;
+    });
+    setHTML($("claim-chains"), `<table class="claim-chains"><thead><tr><th>chain</th><th>model</th><th>claim</th><th>so far</th></tr></thead><tbody>${rows.join("")}</tbody></table>`);
+  }
+  $("claim-chains").addEventListener("click", e => {
+    const tr = e.target.closest("tr[data-chain]"); if (!tr) return;
+    selChain = tr.dataset.chain; dirty = true;
+  });
+
+  const pctOf = (x, d) => x == null ? "—" : (100 * x).toPrecision(d);
+  const gk = (sym, sub) => `<em class="u">${sym}<sub>${sub}</sub></em>`;          // keep Greek symbols out of the uppercase labels
+  const kvHTML = items => items.map(([k, v]) => `<div><span>${k}</span><b>${esc(v)}</b></div>`).join("");
+  // the mean-shift claim's parameters (also shown for a chain where it is off: they say why)
+  const windowItems = c => [[`honest mean ${gk("μ", "b")}`, fix(c.mu_b_us, 1) + " µs"], [`honest ${gk("σ", "b")}`, fix(c.sigma_b_us, 1) + " µs"],
+      ["chain length L", c.L ?? "—"], [`shift if cheating ${gk("δ", "F")}`, fix(c.delta_F_us, 1) + " µs"], [`threshold ${gk("τ", "")}`, fix(c.tau_us, 1) + " µs"],
+      [`threshold t on the sum`, fix(c.t_us, 0) + " µs"], ["drift allowance", c.drift_us == null ? "—" : c.drift_us + " µs"], ["window N", c.n_window ?? "—"],
+      ["calibration", (c.n_cal ?? "—") + " responses"],
+      ["responses clipped at", c.clip_us ? `${c.clip_us.toFixed(0)} µs` + (c.c_us != null ? " (fixed cap)" : ` (μ + ${fix(c.M_us, 0)})`) : "off"]];
+  const missItems = (st, c) => { const f = missFigures(st, c), mi = c.misses || {};
+    return [["deadline misses", missText(f)], ["alarm at", `${f.k ?? "—"} of ${f.W ?? "—"} round trips`],
+            ["honest allowance", mi.miss_rate == null ? "—" : `${mi.miss_rate} a chain`], ["false alarm", mi.alpha == null ? "—" : `≤ ${mi.alpha} a window`],
+            ["alarms so far", st.missAlarms.length]]; };
+  const missSentence = (st, c) => { const f = missFigures(st, c);
+    return `Deadline misses are counted too: an alarm when ${f.k ?? "—"} of the chain's last ${f.W ?? "—"} round trips miss its deadline, `
+      + `more than an honest prover's allowance explains; the chain stays failed until ${f.W ?? "—"} round trips have passed since. `; };
+  const show = (id, on) => { $(id).style.display = on ? "" : "none"; };
+  const missChips = st => st.missAlarms.slice(0, 30).map(a => a.type === "flag" ? `<span class="chip warn" title="${esc(a.detail)}">${esc(`miss flag at #${a.id}`)}</span>`
+    : `<span class="chip bad" title="${esc(a.detail)}">${esc(`miss alarm at #${a.id}`)}</span>`).join("");
+
+  // The claim panel lists every chain with a claim entry (an off one says why); below, the selected chain's
+  // statement, parameters and gauges, for the tests that run on it.
+  function renderClaim() {
+    const chs = infoChains(); if (!chs.length) return;
+    if (!chs.includes(selChain)) selChain = chs[0];
+    renderClaimChains(chs);
+    const ch = selChain, st = claims.get(ch), c = st.info, tests = testsOf(c);
+    // a chain whose window or period fills too slowly: its tests run, but every miss of it alerts at once
+    const perMiss = tests.length && c.per_miss ? `Every miss alerts: ${c.reason || "the claim fills too slowly to weigh single misses"}. ` : "";
+    const lead = (chs.length > 1 ? `${cap1(ch)} chain. ` : "") + perMiss;
+    $("claim-sub").textContent = (chs.length > 1 ? `one claim per chain (click a row); below, the ${ch} chain's: ` : "")
+      + (tests.includes("period") || tests.includes("window") ? "mean response time over a window of challenges against the honest baseline"
+         : tests.includes("misses") ? "deadline misses over a window of round trips" : "no test runs");
+    document.querySelector("#claim-shift").parentElement.previousElementSibling.firstElementChild.textContent = tests.includes("period") ? "the least share of deviating reads the chains can show" : "mean shift over the honest mean";
+    document.querySelector("#claim-var").parentElement.previousElementSibling.firstElementChild.textContent = tests.includes("period") ? "mean over the honest mean" : "responses at the clip";
+    show("claim-gauges", tests.length > 0); show("claim-gauges-mean", tests.includes("period") || tests.includes("window"));
+    if (!tests.length) {                                                       // off: nothing runs, nothing is weighed
+      $("claim-statement").textContent = lead + `Claim off: ${c.reason || "no test runs on this chain"}. No claim weighs its deadline misses: each one is a failure.`;
+      $("claim-kv").innerHTML = kvHTML(c.mode === "period" ? [] : windowItems(c));
+      setHTML($("claim-verdicts"), `<span class="muted" style="font-size:12px">no test runs on this chain</span>`);
+      return;
+    }
+    if (tests.includes("period")) return renderPeriodClaim(c, st, ch, lead, tests.includes("misses"));
+    if (!tests.includes("window")) return renderMissClaim(c, st, ch, lead);
+    const pct = pctOf(c.F, 2), conf = pctOf(c.C, 4);
+    let statement = lead + `Claim: at most ${pct} % of reads deviate from the declared data, each costing at least ${c.delta_c_us ?? "—"} µs, `
+      + `with ${conf} % confidence (an honest prover is flagged with probability ${pctOf(c.alpha, 2)} %). `
+      + (c.c_us != null ? `Baseline and test responses are clipped at the fixed cap ${fix(c.c_us, 0)} µs; missing replies count at the cap. `
+                       : `Each response is clipped at the honest mean + M (M = L·Δc: a clipped one counts as every read cheated). `)
+      + `A window fails if the sum of its responses minus N times the honest mean is at least t. `
+      + (meta.challenge_flags === "warn" ? "No single challenge raises an alert: a gross or missing one is a flag, and the claim weighs it. " : "");
+    const m = meta.memory, b = meta.baseline || {};
+    if (ch === "static" && m && m.capacity_bytes && b.arm_max_ns) statement += `The READY window adds up to ${(b.arm_max_ns / 1e9 * 50e9 / m.capacity_bytes * 100).toPrecision(2)} % that timing cannot see. `;
+    if (tests.includes("misses")) statement += missSentence(st, c);
+    $("claim-statement").textContent = statement;
+    $("claim-kv").innerHTML = kvHTML([...windowItems(c), ...(tests.includes("misses") ? missItems(st, c).slice(0, 2) : [])]);
+    const pr = st.progress, nwin = c.n_window || (pr && pr.n_window) || 1;
+    const n = pr && pr.n != null ? pr.n : 0;
+    $("claim-progress").style.width = Math.min(100, 100 * n / nwin).toFixed(1) + "%"; $("claim-progress").className = "fill";
+    $("claim-progress-label").textContent = `window ${st.verdicts.length + 1}`;
+    $("claim-progress-n").textContent = `${n} of ${nwin} challenges`;
+    const span = Math.max(2 * c.tau_us, 1);                       // the gauge runs from 0 to 2 τ; τ sits in the middle
+    const sh = pr && pr.mean_shift != null ? pr.mean_shift : null;
+    $("claim-shift").style.width = sh == null ? "0%" : Math.min(100, Math.max(0, 100 * sh / span)).toFixed(1) + "%";
+    $("claim-shift").className = "fill" + (sh != null && sh >= c.tau_us ? " bad" : "");
+    $("claim-tau").style.left = "50%";
+    $("claim-shift-n").textContent = sh == null ? `τ = ${fix(c.tau_us, 1)} µs` : `${sgn(sh, 1)} µs (τ = ${fix(c.tau_us, 1)} µs)`;
+    const clipped = pr && pr.clipped != null ? pr.clipped : null;            // half the window at the clip saturates the test (slower than Δc a read)
+    $("claim-var").style.width = clipped == null || !n ? "0%" : Math.min(100, 200 * clipped / n).toFixed(1) + "%";
+    $("claim-var").className = "fill" + (clipped != null && n && clipped * 2 >= n ? " bad" : "");
+    $("claim-varlim").style.left = "50%";
+    $("claim-var-n").textContent = clipped == null ? `clip at ${fix(c.clip_us, 0)} µs` : `${clipped} of ${n} (clip at ${fix(c.clip_us, 0)} µs)`;
+    setHTML($("claim-verdicts"), (tests.includes("misses") ? missChips(st) : "") + st.verdicts.slice(0, 30).map(v => `<span class="chip ${v.pass ? (v.baseline_moved ? "warn" : "ok") : "bad"}" title="${esc(`window ${v.window}: mean ${fix(v.mean_shift, 1)} µs, τ ${fix(v.tau, 2)} µs, ${v.clipped ?? 0} at the clip`)}">`
+      + esc(`${v.pass ? (v.baseline_moved ? "holds, baseline moved" : "holds") : "fails"} · ${sgn(v.mean_shift, 1)} µs · ${v.saturated ? "at the clip" : "F ≈ " + fix(v.implied_F, 3)}`) + `</span>`).join("")
+      || `<span class="muted" style="font-size:12px">no window completed yet</span>`);
+  }
+
+  // A chain whose only test is the miss count (the dynamic and live chains when their mean shift cannot be
+  // tested): the count against its alarm level, and the alarms.
+  function renderMissClaim(c, st, ch, lead) {
+    const f = missFigures(st, c);
+    $("claim-statement").textContent = lead + (c.reason && !c.per_miss ? `Mean-shift claim off: ${c.reason}. ` : "") + missSentence(st, c);
+    $("claim-kv").innerHTML = kvHTML(missItems(st, c));
+    $("claim-progress-label").textContent = st.missAlarm ? `miss count: alarm at #${st.missAlarm.id}` : "miss count";
+    $("claim-progress").style.width = (f.k ? Math.min(100, 100 * f.x / f.k) : 0).toFixed(1) + "%";
+    $("claim-progress").className = "fill" + (st.missAlarm ? " bad" : "");
+    $("claim-progress-n").textContent = `${missText(f)} (alarm at ${f.k ?? "—"}; window ${f.W ?? "—"})`;
+    setHTML($("claim-verdicts"), missChips(st) || `<span class="muted" style="font-size:12px">no miss alarm</span>`);
+  }
+
+  function render() {
+    if (!dirty) return; dirty = false;
+    document.body.dataset.claim = hasClaim() ? "1" : "0";
+    document.body.dataset.claimpanel = infoChains().length ? "1" : "0";
+    renderClaim();
+    document.body.dataset.mode = meta.mode || "research";
+    document.body.dataset.dynamic = meta.dynamic ? "1" : "0";
+    document.body.dataset.memory = meta.memory && meta.memory.capacity_bytes ? "1" : "0";
+    renderMemory();
+    const mp = $("mode"); mp.textContent = meta.mode === "monitor" ? "monitor" : "research"; mp.style.display = meta.mode ? "" : "none";
+    renderMeta(); renderTimeline(); renderRows();
+    if (isMonitor()) renderMonitor(); else { renderToggles(); renderSummary(); renderDist(); }
+  }
+  setInterval(render, 250);
+  window.addEventListener("resize", () => { dirty = true; });
+
+  function connect() {
+    const es = new EventSource("/events");
+    es.onmessage = e => onEvent(JSON.parse(e.data));
+    // connected again only with the snapshot, which carries the state; until then the page shows the old run greyed
+    es.onerror = () => { connected = false; setState("disconnected"); dirty = true; es.close(); setTimeout(connect, 2000); };
+  }
+  connect();
+})();
+</script>
+</body>
+</html>

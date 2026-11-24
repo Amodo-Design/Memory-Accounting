@@ -1,0 +1,17 @@
+# For pip users only: the supported install is `uv sync` (pyproject.toml, versions pinned in uv.lock).
+# This is pyproject.toml's dependencies plus the groups `uv sync` installs by default (gpu, serve, vllm),
+# unpinned; keep it in step with pyproject.toml. A verifier box needs only the first block.
+# On Linux x86_64, torch comes from https://download.pytorch.org/whl/cu130 (pip: --extra-index-url).
+numpy
+scipy
+matplotlib
+safetensors
+# gpu
+torch>=2.7
+# serve
+transformers>=4.45
+accelerate
+huggingface_hub
+# vllm
+vllm>=0.30; sys_platform == 'linux' and platform_machine == 'x86_64'
+torchvision; sys_platform == 'linux' and platform_machine == 'x86_64'

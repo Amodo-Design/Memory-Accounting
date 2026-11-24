@@ -1,0 +1,28 @@
+.venv/
+__pycache__/
+.pytest_cache/
+/build/
+memory_accounting/build/
+*.pyc
+.DS_Store
+*.egg-info/
+# Generated bundles, model files, reference data and host settings
+/setup/
+vstate/
+verifier_bundle*/
+evidence*/
+/models/
+*.int.safetensors
+baseline*.json
+.env
+.env.*
+*.env
+/reference.bin
+/throughput.*/
+/memory.*/
+/timing.*/
+# Run outputs and generated figures
+/docs/figures/
+/results/
+/figures/
+/runs/

@@ -1,0 +1,61 @@
+[project]
+name = "memory-accounting"
+version = "0.19.0"
+description = "Amodo Memory Accounting prototype"
+requires-python = ">=3.12"
+dependencies = ["numpy", "scipy", "matplotlib", "safetensors"]       # the verifier needs only these (+ the C library)
+
+# Dependency groups installed by default by `uv sync` / `uv run` (extras cannot be defaulted, groups can)
+[dependency-groups]
+gpu = ["torch>=2.7"]                                                    # prover / GPU paths; a verifier box: uv sync --no-default-groups
+serve = ["transformers>=4.45", "accelerate", "huggingface_hub"]          # memory_accounting.prover.serve: load a HF model without vLLM
+vllm = ["vllm>=0.30; sys_platform == 'linux' and platform_machine == 'x86_64'", "torchvision; sys_platform == 'linux' and platform_machine == 'x86_64'"]   # scripts/vllm_smoke.py; vLLM pins the torch/torchvision pair
+
+[tool.uv]
+default-groups = ["gpu", "serve", "vllm"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]                                                   # uv run --with pytest pytest (README, Test)
+
+# Style (README): uvx ruff@0.17.5 format, then uvx ruff@0.17.5 check. Its default rules, two more, but these:
+[tool.ruff]
+required-version = ">=0.17.5"
+line-length = 120
+extend-exclude = [".claude"]
+
+[tool.ruff.lint]
+extend-select = [
+    "E731",  # a function is a def, not a name given a lambda (PEP 8)
+    "E741",  # no variable named l, I or O, which read as 1 and 0 (PEP 8)
+]
+ignore = [
+    "BLE001",  # catching everything is deliberate where it is done: a prover's record, a load thread, the stop
+    "TRY004",  # malformed input (a manifest, a weights file, a page request) is a ValueError, whatever is wrong
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = [
+    "B023",     # a helper defined in a loop is called in the same iteration
+    "PLW1510",  # a test reads the return code of what it runs
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["memory_accounting*"]                                                     # memory_accounting and its subpackages: core, models, setup, prover, verifier, experiments
+
+[tool.setuptools.package-data]
+memory_accounting = ["kernels/*", "assets/fonts/*", "assets/full logo.png"]
+"memory_accounting.verifier.ui" = ["*.html"]
+
+# torch: CUDA 13.0 wheels on x86_64 Linux (the H200 hosts), PyPI (CPU) elsewhere (Mac, aarch64 verifier boxes); one universal lockfile covers both
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu130", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" }]
+torchvision = [{ index = "pytorch-cu130", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
